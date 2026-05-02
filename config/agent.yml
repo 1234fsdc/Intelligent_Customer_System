@@ -1,1 +1,2 @@
-external_data_path: data/external/records.csv
+# Agent configuration for device recommendation system
+device_data_dir: data/devices

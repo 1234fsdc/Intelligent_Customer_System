@@ -1,47 +1,44 @@
 """
-RAG检索增强生成服务模块
+RAG（检索增强生成）服务模块
 
 【什么是RAG】
 RAG = Retrieval-Augmented Generation（检索增强生成）
-核心思想：先检索相关知识，再让AI基于知识回答问题。
-解决大模型的"幻觉"问题（胡说八道），让回答有依据、可追溯。
+传统LLM的问题：知识来自训练数据，可能过时或 hallucination（胡说八道）
+RAG的解决方案：先从外部知识库检索相关资料，再让LLM基于资料回答
 
 【RAG工作流程】
-1. 用户提问 → 2. 向量检索相关文档 → 3. 将文档+问题一起输入AI → 4. AI基于文档回答
+1. 用户提问
+2. 将问题向量化，在向量库中检索相关文档
+3. 将检索到的文档和用户问题组合成Prompt
+4. LLM基于参考资料生成回答
+5. 返回回答给用户
 
 【为什么用RAG】
-- 大模型训练数据有截止日期，不知道最新信息
-- 大模型不知道企业内部私有知识
-- RAG让AI能"查资料"再回答，提高准确性和可信度
+1. 准确性：回答基于真实资料，减少幻觉
+2. 可更新：只需更新知识库，无需重新训练模型
+3. 可追溯：可以展示回答的参考来源
+4. 成本低：比微调模型便宜得多
 """
 
-from langchain_core.documents import Document
+from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from rag.vector_store import VectorStoreService
-from utils.prompt_loader import load_rag_prompts
-from langchain_core.prompts import PromptTemplate
 from model.factory import chat_model
+from utils.prompt_loader import load_rag_prompts
 
 
-def print_prompt(prompt):
+class RagSummarizeService:
     """
-    打印提示词的调试函数
+    RAG摘要服务类
     
-    【为什么】开发调试时需要查看最终生成的提示词内容，确保格式正确
-    【怎么做】打印分隔线后输出提示词字符串，最后返回prompt供链式调用继续传递
-    """
-    print("="*20)
-    print(prompt.to_string())
-    print("="*20)
-    return prompt
-
-
-class RagSummarizeService(object):
-    """
-    RAG总结服务类
+    【职责】
+    1. 管理向量库检索器
+    2. 构建RAG提示词模板
+    3. 执行检索+生成的完整流程
     
-    【职责】协调向量检索和文本生成两个环节，封装RAG完整流程
-    【设计模式】外观模式（Facade），对外提供简洁的rag_summarize接口，隐藏内部复杂逻辑
+    【为什么封装成类】
+    将检索和生成逻辑封装，对外提供简洁的rag_summarize接口，
+    调用者不需要知道内部如何实现检索和Prompt构建。
     """
     
     def __init__(self):
@@ -49,124 +46,65 @@ class RagSummarizeService(object):
         初始化RAG服务
         
         【初始化步骤】
-        1. 创建向量存储服务（连接Chroma数据库）
-        2. 获取检索器（用于搜索相似文档）
-        3. 加载RAG提示词模板（告诉AI如何基于参考资料回答）
-        4. 创建PromptTemplate对象（用于格式化提示词）
-        5. 获取大模型实例（通义千问）
-        6. 构建处理链（Chain），将各环节串联
+        1. 创建向量存储服务实例（管理Chroma向量库）
+        2. 获取检索器（用于语义检索）
+        3. 加载RAG提示词模板（告诉AI如何基于资料回答）
+        4. 构建LangChain Chain（提示词→模型→输出解析器）
         """
-        # 【为什么用VectorStoreService】
-        # 封装了Chroma向量库的操作，提供文档存储、检索等能力
+        # 【向量存储服务】
+        # 封装了Chroma向量库的加载、检索等功能
         self.vector_store = VectorStoreService()
         
-        # 【什么是Retriever】
-        # 检索器，接收查询字符串，返回最相似的文档列表
-        # 内部使用向量相似度计算（余弦相似度）找到相关文档
+        # 【检索器】
+        # 输入查询文本，返回相关文档列表
         self.retriever = self.vector_store.get_retriever()
         
-        # 【为什么加载提示词】
-        # RAG需要特殊的提示词模板，告诉AI："基于以下参考资料回答问题"
-        self.prompt_text = load_rag_prompts()
+        # 【提示词模板】
+        # 从配置文件加载，格式如：
+        # "基于以下参考资料回答问题：\n{context}\n\n用户问题：{input}"
+        self.prompt_template = PromptTemplate.from_template(load_rag_prompts())
         
-        # 【PromptTemplate的作用】
-        # 将提示词模板中的变量（如{input}、{context}）替换为实际值
-        self.prompt_template = PromptTemplate.from_template(self.prompt_text)
-        
-        # 【为什么保存model引用】
-        # 用于构建处理链，实际调用大模型生成回答
-        self.model = chat_model
-        
-        # 【为什么初始化chain】
-        # LangChain的链式调用（|运算符）将多个组件串联，数据从左到右流动
-        self.chain = self._init_chain()
-
-    def _init_chain(self):
-        """
-        初始化LangChain处理链
-        
-        【什么是Chain】
-        Chain是LangChain的核心概念，将多个处理步骤串联，数据流式传递。
-        用|运算符连接，类似Unix管道的概念。
-        
-        【本项目的Chain流程】
-        prompt_template | print_prompt | model | StrOutputParser
-        
-        1. prompt_template: 接收{"input": ..., "context": ...}，填充模板生成完整提示词
-        2. print_prompt: 打印提示词（调试用），原样返回
-        3. model: 将提示词传给大模型，生成回答
-        4. StrOutputParser: 解析模型输出，提取纯文本内容
-        
-        【为什么用StrOutputParser】
-        # 大模型返回的是复杂的Message对象，Parser将其转换为普通字符串
-        """
-        chain = self.prompt_template | print_prompt | self.model | StrOutputParser()
-        return chain
-
-    def retriever_docs(self, query: str) -> list[Document]:
-        """
-        检索相关文档
-        
-        【参数】
-        query: 用户查询字符串（如"小户型适合哪些扫地机器人"）
-        
-        【返回值】
-        Document对象列表，每个Document包含：
-        - page_content: 文档内容（字符串）
-        - metadata: 元数据（如来源文件、页码等）
-        
-        【检索原理】
-        1. 将query转为向量（embedding）
-        2. 在Chroma向量库中查找最相似的向量
-        3. 返回对应的原始文档
-        """
-        return self.retriever.invoke(query)
+        # 【构建Chain】
+        # Chain是LangChain的核心概念，将多个组件串联起来：
+        # PromptTemplate → ChatModel → StrOutputParser
+        # 输入：{"input": 用户问题, "context": 参考资料}
+        # 输出：AI生成的回答字符串
+        self.chain = self.prompt_template | self.model | StrOutputParser()
 
     def rag_summarize(self, query: str) -> str:
         """
-        RAG总结主方法
+        执行RAG检索和摘要生成
         
-        【完整流程】
-        1. 根据query检索相关文档
-        2. 将文档格式化为上下文字符串
-        3. 调用chain生成回答
+        【执行流程】
+        1. 调用retriever检索相关文档
+        2. 将文档格式化为上下文文本
+        3. 调用Chain生成最终回答
         
         【参数】
-        query: 用户问题
+        query: 用户的查询问题
         
         【返回值】
-        AI生成的回答字符串（基于检索到的参考资料）
+        AI基于参考资料生成的回答字符串
         """
-        # 【步骤1】检索相关文档
-        context_docs = self.retriever_docs(query)
-
-        # 【步骤2】格式化文档为上下文字符串
-        # 【为什么拼接成字符串】
-        # 大模型只能处理文本，需要将Document对象转为字符串格式
+        # 【步骤1：检索相关文档】
+        # retriever将query向量化，在Chroma中搜索最相似的文档
+        # 返回TopK个Document对象（k由配置决定，默认3）
+        context_docs = self.retriever.invoke(query)
+        
+        # 【步骤2：格式化上下文】
+        # 将多个文档内容拼接成一个字符串，添加编号便于AI理解
         context = ""
-        counter = 0
-        for doc in context_docs:
-            counter += 1
-            # 【格式化格式】
-            # 【参考资料N】: 参考资料：内容 | 参考元数据：元数据
-            # 清晰的格式帮助AI理解哪些是可参考的内容
-            context += f"【参考资料{counter}】: 参考资料：{doc.page_content} | 参考元数据：{doc.metadata}\n"
-
-        # 【步骤3】调用处理链生成回答
-        # 【invoke参数】
-        # 字典的key必须和prompt_template中的变量名匹配
-        # {input}对应用户问题，{context}对应参考资料
-        return self.chain.invoke(
-            {
-                "input": query,
-                "context": context,
-            }
-        )
+        for i, doc in enumerate(context_docs, 1):
+            context += f"【参考资料{i}】: {doc.page_content}\n"
+        
+        # 【步骤3：生成回答】
+        # 将用户问题和参考资料一起传给LLM，生成最终回答
+        return self.chain.invoke({"input": query, "context": context})
 
 
 if __name__ == '__main__':
     # 【模块自测】
-    # 创建RAG服务实例，测试小户型扫地机器人问题
-    rag = RagSummarizeService()
-
-    print(rag.rag_summarize("小户型适合哪些扫地机器人"))
+    # 测试RAG服务是否正常工作
+    service = RagSummarizeService()
+    result = service.rag_summarize("如何清洁扫地机器人？")
+    print(result)

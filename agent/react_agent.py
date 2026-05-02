@@ -1,9 +1,9 @@
 """
-ReAct智能体核心模块
+ReAct智能体核心模块 - 电子设备推荐与知识库问答系统
 
 【什么是ReAct】
 ReAct = Reasoning（推理）+ Acting（行动），是一种让AI能够"思考→行动→观察→再思考"的循环架构。
-AI不仅能回答问题，还能调用工具（如查天气、查知识库）获取信息，然后基于工具结果继续推理。
+AI不仅能回答问题，还能调用工具（如设备检索、知识库查询）获取信息，然后基于工具结果继续推理。
 
 【为什么用LangChain的create_agent】
 LangChain封装了ReAct的复杂逻辑，包括：
@@ -15,14 +15,13 @@ LangChain封装了ReAct的复杂逻辑，包括：
 from langchain.agents import create_agent
 from model.factory import chat_model
 from utils.prompt_loader import load_system_prompts
-from agent.tools.agent_tools import (rag_summarize, get_weather, get_user_location, get_user_id,
-                                     get_current_month, fetch_external_data, fill_context_for_report)
-from agent.tools.middleware import monitor_tool, log_before_model, report_prompt_switch
+from agent.tools.device_tools import search_devices, filter_by_budget, match_by_scene, sort_by_value
+from agent.tools.agent_tools import rag_summarize
 
 
 class ReactAgent:
     """
-    ReAct智能体封装类
+    ReAct智能体封装类 - 电子设备推荐与知识库问答系统
     
     【为什么封装成类】
     1. 统一管理agent实例的生命周期（创建、复用）
@@ -37,8 +36,7 @@ class ReactAgent:
         【create_agent参数说明】
         - model: 大语言模型实例（这里是通义千问），负责理解问题和生成回答
         - system_prompt: 系统提示词，告诉AI它的角色和能力边界
-        - tools: 工具列表，AI可以调用的外部功能（如查天气、查知识库）
-        - middleware: 中间件列表，在关键节点插入自定义逻辑（如日志、监控）
+        - tools: 工具列表，AI可以调用的外部功能（如设备检索、知识库查询）
         
         【工具是如何被AI调用的】
         1. AI分析用户问题，判断是否需要工具
@@ -51,16 +49,10 @@ class ReactAgent:
             system_prompt=load_system_prompts(),  # 加载系统提示词（定义AI角色和能力）
             # 工具列表：AI可调用的功能，每个工具都是一个装饰器包装的函数
             tools=[rag_summarize,      # RAG知识库检索工具
-                   get_weather,        # 天气查询工具
-                   get_user_location,  # 获取用户位置工具
-                   get_user_id,        # 获取用户ID工具
-                   get_current_month,  # 获取当前月份工具
-                   fetch_external_data, # 获取外部数据工具
-                   fill_context_for_report],  # 填充报告上下文工具
-            # 中间件列表：在工具调用前后、模型调用前后插入自定义逻辑
-            middleware=[monitor_tool,       # 监控工具调用情况
-                       log_before_model,   # 在调用模型前记录日志
-                       report_prompt_switch],  # 根据上下文切换提示词
+                   search_devices,     # 设备检索工具
+                   filter_by_budget,   # 预算筛选工具
+                   match_by_scene,     # 场景匹配工具
+                   sort_by_value],     # 性价比排序工具
         )
 
     def execute_stream(self, query: str):
@@ -72,7 +64,7 @@ class ReactAgent:
         提升用户体验，避免长时间等待的焦虑感。
         
         【参数】
-        query: 用户的输入问题（如"今天天气怎么样"）
+        query: 用户的输入问题（如"推荐一款3000元以内的手机"）
         
         【返回值】
         生成器（generator），逐个yield AI生成的内容片段
@@ -93,12 +85,7 @@ class ReactAgent:
         # 【stream方法参数说明】
         # - input_dict: 输入数据，包含用户消息
         # - stream_mode="values": 流式输出模式，返回中间状态值
-        # - context: 上下文字典，可以在中间件中访问，用于传递额外信息（如是否生成报告模式）
-        #
-        # 【context={"report": False}的作用】
-        # 这是一个运行时标记，中间件report_prompt_switch会检查这个值，
-        # 如果为True，则切换到报告生成专用的提示词模板
-        for chunk in self.agent.stream(input_dict, stream_mode="values", context={"report": False}):
+        for chunk in self.agent.stream(input_dict, stream_mode="values"):
             # 【chunk的结构】
             # chunk是一个字典，包含messages列表，表示当前对话状态的所有消息
             # 包括：系统提示词、用户输入、AI思考过程、工具调用结果、AI最终回答等
@@ -125,5 +112,5 @@ if __name__ == '__main__':
     # 【测试execute_stream】
     # 调用execute_stream获取生成器，用for循环逐个获取内容片段
     # end=""表示打印不换行，flush=True表示立即刷新缓冲区（实时显示）
-    for chunk in agent.execute_stream("给我生成我的使用报告"):
+    for chunk in agent.execute_stream("推荐一款3000元以内的手机，主要用来打游戏"):
         print(chunk, end="", flush=True)

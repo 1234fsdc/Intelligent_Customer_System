@@ -35,9 +35,6 @@ def load_rag_config(config_path: str=get_abs_path("config/rag.yml"), encoding: s
     字典对象，包含配置项的键值对
     """
     with open(config_path, "r", encoding=encoding) as f:
-        # 【yaml.FullLoader的作用】
-        # 安全地加载YAML文件，支持所有标准YAML标签，但禁止执行任意代码
-        # 避免yaml.load()默认使用的不安全Loader可能带来的代码注入风险
         return yaml.load(f, Loader=yaml.FullLoader)
 
 
@@ -63,9 +60,7 @@ def load_prompts_config(config_path: str=get_abs_path("config/prompts.yml"), enc
     加载提示词配置
     
     【配置内容】
-    - system_prompt: 系统提示词（定义AI角色和能力）
-    - rag_prompt: RAG提示词模板（告诉AI如何基于参考资料回答）
-    - report_prompt: 报告生成提示词模板
+    - main_prompt: 系统提示词（定义AI角色和能力）
     """
     with open(config_path, "r", encoding=encoding) as f:
         return yaml.load(f, Loader=yaml.FullLoader)
@@ -76,7 +71,7 @@ def load_agent_config(config_path: str=get_abs_path("config/agent.yml"), encodin
     加载Agent配置
     
     【配置内容】
-    - external_data_path: 外部数据文件路径（CSV格式）
+    - device_data_dir: 设备数据目录
     - 其他Agent运行参数
     """
     with open(config_path, "r", encoding=encoding) as f:
@@ -102,5 +97,8 @@ agent_conf = load_agent_config()
 
 if __name__ == '__main__':
     # 【模块自测】
-    # 测试配置是否正确加载，打印聊天模型名称
-    print(rag_conf["chat_model_name"])
+    # 测试配置是否正确加载
+    print(rag_conf)
+    print(chroma_conf)
+    print(prompts_conf)
+    print(agent_conf)

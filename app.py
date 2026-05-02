@@ -18,7 +18,7 @@ from agent.react_agent import ReactAgent
 # ==================== 页面标题设置 ====================
 # 【为什么】Streamlit的st.title会在页面顶部渲染一个标题，让用户知道这是什么应用
 # 【怎么做】调用st.title()传入字符串，Streamlit自动渲染为HTML标题元素
-st.title("智扫通机器人智能客服")
+st.title("电子设备推荐系统")
 st.divider()  # 添加分割线，美化界面
 
 # ==================== Session State 初始化 ====================
